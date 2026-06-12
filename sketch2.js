@@ -1,25 +1,23 @@
-// sketch.js - Paint Mirror with Huge Splotches & Frequent Clearing (5 sec)
-let video;
+// sketch.js - Football Kick Canvas (touch to kick, paint splotches accumulate)
 let bgImg;
-let ballHitImgs = [];
-let kickFrames = [];
+let ballHitImgs = [];     // ballhit1.png, ballhit2.png
+let kickFrames = [];      // kick1, kick2, kick3
 
+let paintLayer;           // offscreen canvas for accumulated splotches
+
+// Kicker animation state
+let isKicking = false;
 let kickIndex = 0;
-let lastKickFrameTime = 0;
-const KICK_FRAME_INTERVAL = 100;
+let kickStartTime = 0;
+let kickX = 0;
+let kickY = 0;
+const KICK_FRAME_DURATION = 100;   // ms per frame (100ms = 10fps for kick)
+const KICK_FRAMES_TOTAL = 3;
+const KICK_DISPLAY_DURATION = 300;  // total animation time (3 frames × 100ms)
 
-let mirrorLayer;
-let splotches = [];
-const MAX_SPLOTCHES = 5000;
-const NEW_SPLOTCHES_PER_FRAME = 100;
-
-// EVEN LARGER splotches: 160–260px
-const MIN_SPLOTCH_SIZE = 160;
-const MAX_SPLOTCH_SIZE = 360;
-
-// Clear every 5 seconds (more frequent)
-let lastResetTime = 0;
-const RESET_INTERVAL = 5000; // milliseconds
+// Instructions
+let showInstructions = true;
+let instructionFadeTime = 0;
 
 let assetsLoaded = false;
 let loadedCount = 0;
@@ -56,18 +54,18 @@ function setup() {
     createCanvas(windowWidth, windowHeight);
     pixelDensity(1);
 
-    mirrorLayer = createGraphics(width, height);
-    mirrorLayer.pixelDensity(1);
-
-    video = createCapture(VIDEO);
-    video.size(80, 60);
-    video.hide();
-
-    lastKickFrameTime = millis();
-    lastResetTime = millis();
-    frameRate(30);
-
+    // Create offscreen layer for paint splotches
+    paintLayer = createGraphics(width, height);
+    paintLayer.pixelDensity(1);
+    
+    // Draw background onto paint layer once
     drawBackgroundToLayer();
+
+    // Show instructions for 3 seconds
+    showInstructions = true;
+    instructionFadeTime = millis() + 3000;
+
+    frameRate(30);
 
     setTimeout(() => {
         if (!assetsLoaded) hideLoadingScreen();
@@ -76,46 +74,22 @@ function setup() {
 
 function drawBackgroundToLayer() {
     if (bgImg && bgImg.width > 0) {
-        mirrorLayer.image(bgImg, 0, 0, width, height);
+        // Draw background to cover canvas (stretched)
+        paintLayer.image(bgImg, 0, 0, width, height);
     } else {
-        mirrorLayer.background(30, 20, 15);
+        paintLayer.background(30, 20, 15);
     }
 }
 
-// ---------- CLEARING HAPPENS HERE (both automatic and manual) ----------
-function resetMirror() {
-    drawBackgroundToLayer();   // wipe offscreen layer, put fresh background
-    splotches = [];            // discard all stored splotch data
-    console.log("🧹 Canvas cleared at " + new Date().toLocaleTimeString());
-}
+// Add a random paint splotch at a specific location
+function addPaintSplotch(x, y) {
+    let validImgs = ballHitImgs.filter(img => img && img.width > 0);
+    if (validImgs.length === 0) return;
 
-function getBrightnessAtCanvasPos(canvasX, canvasY) {
-    if (!video || video.width === 0 || !video.pixels) return 128;
-
-    let mirroredX = width - canvasX;
-    let vidX = floor(map(mirroredX, 0, width, 0, video.width));
-    let vidY = floor(map(canvasY, 0, height, 0, video.height));
-
-    vidX = constrain(vidX, 0, video.width - 1);
-    vidY = constrain(vidY, 0, video.height - 1);
-
-    let idx = (vidY * video.width + vidX) * 4;
-    if (idx + 2 >= video.pixels.length) return 128;
-
-    let r = video.pixels[idx];
-    let g = video.pixels[idx + 1];
-    let b = video.pixels[idx + 2];
-    return (r + g + b) / 3;
-}
-
-function addSplotchToLayer(x, y) {
-    if (splotches.length >= MAX_SPLOTCHES) splotches.shift();
-
-    let brightness = getBrightnessAtCanvasPos(x, y);
-    let img = (brightness > 128) ? ballHitImgs[0] : ballHitImgs[1];
-    if (!img) return;
-
-    let baseSize = random(MIN_SPLOTCH_SIZE, MAX_SPLOTCH_SIZE);
+    let img = random(validImgs);
+    
+    // Random size: 80–200px (preserve aspect ratio)
+    let baseSize = random(80, 200);
     let imgW = img.width;
     let imgH = img.height;
     let drawW, drawH;
@@ -126,107 +100,144 @@ function addSplotchToLayer(x, y) {
         drawH = baseSize;
         drawW = baseSize * (imgW / imgH);
     }
-
-    splotches.push({ x, y, img, w: drawW, h: drawH });
-    mirrorLayer.image(img, x - drawW/2, y - drawH/2, drawW, drawH);
+    
+    // Draw directly onto offscreen layer
+    paintLayer.image(img, x - drawW/2, y - drawH/2, drawW, drawH);
 }
 
-function addGridSplotchToLayer() {
-    let cols = 30;
-    let rows = floor(cols * height / width);
-    if (rows < 1) rows = 1;
-    let cellW = width / cols;
-    let cellH = height / rows;
-    let col = floor(random(cols));
-    let row = floor(random(rows));
-    let x = col * cellW + random(cellW);
-    let y = row * cellH + random(cellH);
-    addSplotchToLayer(x, y);
+// Start the kicker animation at a specific position
+function startKick(x, y) {
+    isKicking = true;
+    kickIndex = 0;
+    kickStartTime = millis();
+    kickX = x;
+    kickY = y;
 }
 
-function addRandomSplotchToLayer() {
-    addSplotchToLayer(random(width), random(height));
-}
-
-function drawKicker() {
-    let validKicks = kickFrames.filter(k => k && k.width > 0);
-    if (validKicks.length === 0) return;
-
+// Update and draw the kicker animation
+function drawKickerAnimation() {
+    if (!isKicking) return;
+    
     let now = millis();
-    if (now - lastKickFrameTime >= KICK_FRAME_INTERVAL) {
-        kickIndex = (kickIndex + 1) % validKicks.length;
-        lastKickFrameTime = now;
+    let elapsed = now - kickStartTime;
+    
+    if (elapsed >= KICK_DISPLAY_DURATION) {
+        isKicking = false;  // animation finished
+        return;
     }
-
-    let kickImg = validKicks[kickIndex];
-    let kickW = constrain(width * 0.18, 80, 180);
+    
+    // Determine which frame to show (0, 1, or 2)
+    let frameIndex = floor(elapsed / KICK_FRAME_DURATION);
+    frameIndex = constrain(frameIndex, 0, KICK_FRAMES_TOTAL - 1);
+    
+    let kickImg = kickFrames[frameIndex];
+    if (!kickImg) return;
+    
+    // Draw kicker large (200–300px)
+    let kickW = constrain(width * 0.35, 200, 350);
     let kickH = kickImg.height * (kickW / kickImg.width);
-    let posX = 16;
-    let posY = height - kickH - 20;
-
-    drawingContext.shadowBlur = 12;
-    drawingContext.shadowColor = "rgba(0,0,0,0.4)";
-    image(kickImg, posX, posY, kickW, kickH);
+    
+    // Position at the touch location (offset so foot hits the spot)
+    let drawX = kickX - kickW/2;
+    let drawY = kickY - kickH/2;
+    
+    // Add shadow for pop
+    drawingContext.shadowBlur = 15;
+    drawingContext.shadowColor = "rgba(0,0,0,0.5)";
+    image(kickImg, drawX, drawY, kickW, kickH);
     drawingContext.shadowBlur = 0;
 }
 
-function draw() {
-    if (video && video.loadPixels) video.loadPixels();
-
-    // Add new splotches each frame
-    for (let i = 0; i < NEW_SPLOTCHES_PER_FRAME; i++) {
-        if (random() < 0.7) addGridSplotchToLayer();
-        else addRandomSplotchToLayer();
+// Draw instructions (floating text, fades after 3 seconds)
+function drawInstructions() {
+    if (!showInstructions) return;
+    
+    let now = millis();
+    let alpha = 255;
+    
+    if (now > instructionFadeTime) {
+        showInstructions = false;
+        return;
     }
-
-    // Draw the persistent mirror layer
-    image(mirrorLayer, 0, 0);
-    drawKicker();
-
-    // ---------- AUTOMATIC CLEARING EVERY 5 SECONDS ----------
-    // This is where the canvas clears automatically.
-    if (millis() - lastResetTime >= RESET_INTERVAL) {
-        resetMirror();          // calls the clear function
-        lastResetTime = millis();
+    
+    // Fade out in last 0.5 seconds
+    let timeLeft = instructionFadeTime - now;
+    if (timeLeft < 500) {
+        alpha = map(timeLeft, 0, 500, 0, 255);
     }
+    
+    push();
+    textAlign(CENTER, CENTER);
+    textSize(min(width, height) * 0.05);
+    fill(255, 255, 200, alpha);
+    stroke(0, 0, 0, alpha * 0.7);
+    strokeWeight(3);
+    textFont('monospace');
+    text("⚽ ART WORKERS FOOTBALL CANVAS ⚽\n\nTOUCH TO KICK!", width/2, height/2);
+    pop();
 }
 
+function draw() {
+    // Draw the paint layer (background + accumulated splotches)
+    image(paintLayer, 0, 0);
+    
+    // Draw kicker animation on top (if active)
+    drawKickerAnimation();
+    
+    // Draw instructions
+    drawInstructions();
+}
+
+// Touch interaction: add paint splotch + start kicker animation
+function touchStarted() {
+    if (touches.length > 0) {
+        let x = touches[0].x;
+        let y = touches[0].y;
+        
+        // Add paint splotch at touch location
+        addPaintSplotch(x, y);
+        
+        // Start kicker animation at the same location
+        startKick(x, y);
+    }
+    return false;  // prevent default touch behavior
+}
+
+// Mouse click for desktop testing
+function mousePressed() {
+    addPaintSplotch(mouseX, mouseY);
+    startKick(mouseX, mouseY);
+    return false;
+}
+
+// Window resize: recreate paint layer and redraw everything
 function windowResized() {
     resizeCanvas(windowWidth, windowHeight);
-    let newLayer = createGraphics(width, height);
-    newLayer.pixelDensity(1);
+    
+    // Save existing splotches to redraw on new layer
+    let oldLayer = paintLayer;
+    paintLayer = createGraphics(width, height);
+    paintLayer.pixelDensity(1);
+    
+    // Redraw background
     if (bgImg && bgImg.width > 0) {
-        newLayer.image(bgImg, 0, 0, width, height);
+        paintLayer.image(bgImg, 0, 0, width, height);
     } else {
-        newLayer.background(30, 20, 15);
+        paintLayer.background(30, 20, 15);
     }
-    for (let s of splotches) {
-        newLayer.image(s.img, s.x - s.w/2, s.y - s.h/2, s.w, s.h);
-    }
-    mirrorLayer = newLayer;
+    
+    // Note: We can't easily transfer existing splotches because coordinates change.
+    // Better to clear them on resize (user can add new ones).
+    console.log("Window resized — paint splotches reset");
 }
 
+// Keyboard shortcuts
 function keyPressed() {
-    // Manual clearing with 'r' or 'c' key
-    if (key === 'r' || key === 'R' || key === 'c' || key === 'C') {
-        resetMirror();
-        lastResetTime = millis();
+    if (key === 's' || key === 'S') {
+        saveCanvas('football_canvas', 'png');
     }
-    if (key === 's' || key === 'S') saveCanvas('paint_mirror', 'png');
-}
-
-function addBurstAt(x, y) {
-    for (let i = 0; i < 40; i++) {
-        addSplotchToLayer(x + random(-80, 80), y + random(-80, 80));
+    if (key === 'c' || key === 'C') {
+        // Clear all paint splotches
+        drawBackgroundToLayer();
     }
-}
-
-function mousePressed() {
-    addBurstAt(mouseX, mouseY);
-    return false;
-}
-
-function touchStarted() {
-    if (touches.length > 0) addBurstAt(touches[0].x, touches[0].y);
-    return false;
 }
