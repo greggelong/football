@@ -42,7 +42,7 @@ function assetLoaded() {
 }
 
 function preload() {
-    bgImg = loadImage('background.png', assetLoaded, assetLoaded);
+    bgImg = loadImage('backgrounds.png', assetLoaded, assetLoaded);
     ballHitImgs[0] = loadImage('ballhit1.png', assetLoaded, assetLoaded);
     ballHitImgs[1] = loadImage('ballhit2.png', assetLoaded, assetLoaded);
     kickFrames[0] = loadImage('kick1.png', assetLoaded, assetLoaded);
