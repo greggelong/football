@@ -43,8 +43,8 @@ function assetLoaded() {
 
 function preload() {
     bgImg = loadImage('backgrounds.png', assetLoaded, assetLoaded);
-    ballHitImgs[0] = loadImage('ballhit1.png', assetLoaded, assetLoaded);
-    ballHitImgs[1] = loadImage('ballhit2.png', assetLoaded, assetLoaded);
+    ballHitImgs[0] = loadImage('ballhit1s.png', assetLoaded, assetLoaded);
+    ballHitImgs[1] = loadImage('ballhit2s.png', assetLoaded, assetLoaded);
     kickFrames[0] = loadImage('kick1.png', assetLoaded, assetLoaded);
     kickFrames[1] = loadImage('kick2.png', assetLoaded, assetLoaded);
     kickFrames[2] = loadImage('kick3.png', assetLoaded, assetLoaded);
